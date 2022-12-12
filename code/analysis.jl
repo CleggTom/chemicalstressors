@@ -86,8 +86,12 @@ a = similar(r["J"])
 Rinf = similar(r["J"])
 pert = similar(r["J"])
 
+prop = [0.0]
+
 Threads.@threads for i = 1:length(r["J"])
-    println(i / length(r["J"]))
+    
+    prop[1] += 1 / length(r["J"])
+    Threads.threadid() == 1 && println(prop[1])
     a[i] = get_a_mat(r["J"][i], r["p"][i], r["mass"][i])
     Rinf[i] = get_Rinf(r["J"][i], r["p"][i], r["mass"][i]);
     pert[i] = max_perturbation(r["J"][i], r["p"][i], r["mass"][i]);
