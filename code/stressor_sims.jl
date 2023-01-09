@@ -26,25 +26,32 @@ end
 #derivative function
 dx!(dx,x,p,t) = MiCRM.Simulations.dx!(dx,x,p,t;  growth! = growth_MiCRM_detox!)
 
-
 #params
-function fu(N,M,kw)
+#Dirchlet U matricies
+#Dirchlet U matricies
+function dirchlet_uptake(N,M,kw)
     u = zeros(N,M)
-    u[:, 1 : (M-1)] .= MiCRM.Parameters.modular_uptake(N,M - 1, N_modules = 5, s_ratio = kw[:u_ratio]) .* kw[:u_tot]
-    u[:, end] .= ones(N)
+    u[:,1 : end-1] .= Array(rand(Dirichlet(M-1, kw[:au]), N)')
+    u[:,end] .= rand(Dirichlet(N, 1.0), 1)
     return(u)
 end
 
-function fl(N,M,kw)
-    l = MiCRM.Parameters.modular_leakage(M; N_modules = 5, s_ratio = kw[:l_ratio], λ = kw[:λ])
-    #dont leak to or from stressor
-    l[:,end] .= 0.0
-    l[end,:] .= 0.0
-    [l[i,:] .=  kw[:λ] * l[i,:] ./ sum(l[i,:]) for i = 1:(M-1)]
-    return(l)
+#Dirchlet L matricies
+function dirchlet_leakage(N,M,kw)
+    l = zeros(M,M)
+    # for α = 1:M-2
+    #     l[α, α+1 : end-1] .= rand(Dirichlet(M - 1 - α, kw[:al]), 1)
+    # end
+    l[1 : end-1, 1 : end-1] .= Array(rand(Dirichlet(M-1, kw[:al]), M-1)')
+    return(l * kw[:λ])
 end
 
-fρ(N,M,kw) = ones(M) * M 
+function fρ(N,M,kw)
+    ρ = ones(M) * M
+    # ρ[1] = M * M
+    ρ[end] = 0.0
+    return(ρ)
+end
 
 N,M = 25,25
 
@@ -53,7 +60,8 @@ N,M = 25,25
 γ[:,end] .= -1
 
 #generate test parameters
-p = MiCRM.Parameters.generate_params(N, M, f_u = fu, f_l = fl, f_ρ = fρ, λ = 1e-6, γ = γ, u_ratio = 10.0, l_ratio = 10.0, u_tot = 1.0)
+p = MiCRM.Parameters.generate_params(N, M, f_u = dirchlet_uptake, f_l = dirchlet_leakage, f_ρ = fρ,
+    λ = 1e-6, γ = γ, au = 1.0, al = 1.0)
 
 #simualtion params
 x0 = rand(N+M)
@@ -62,54 +70,44 @@ t = (0.0,1e10)
 prob = ODEProblem(dx!, x0, t, p)
 sol = solve(prob, AutoTsit5(Rosenbrock23()), callback = TerminateSteadyState())
 
-
 #vary stressor supply, and uptake & leakage structure
-N_r,N_u,N_l,N_utot,N_λ,N_ρ = 10,10,10,5,3,5
+N_r,N_u,N_λ,N_ρ = 25,20,3,10
 
-s_vec = 10 .^ range(0, 2, length = N_u)
-u_vec = range(1.0, 10.0, length = N_utot)
+u_vec = 10 .^ range(-2, 2, length = N_u)
 λ_vec = [0.1, 0.3, 0.7]
-ρ_vec = [0.0, 0.1, 1.0,10.0, M]
+ρ_vec = 10 .^ range(-4,4, length = N_ρ)
 
 
 
-sol_mat = Array{Any, 6 }(undef, N_r,N_u,N_l,N_utot,N_λ,N_ρ)
+sol_mat = Array{Any, 4}(undef, N_r,N_u,N_λ,N_ρ)
 mass_mat = similar(sol_mat)
 p_mat = similar(sol_mat)
 J_mat = similar(sol_mat)
+dx_mat = similar(sol_mat)
 
 Threads.@threads for r = 1:N_r
-    # println(r)
-    for (i,us) = enumerate(s_vec)
-        for (j,ls) = enumerate(s_vec)
-            for (k, utot) = enumerate(u_vec)
-                for (l,λ) = enumerate(λ_vec)
+    for (i,u) = enumerate(u_vec)
+        for (j,λ) = enumerate(λ_vec)
+             # println("u: ", i, " l: ", j)
+             # println("Thread: ", Threads.threadid()," rep: ",r ," λ: ", λ)
+             p_sim = MiCRM.Parameters.generate_params(N, M, f_u = dirchlet_uptake, f_l = dirchlet_leakage, f_ρ = fρ, λ = λ, γ = γ, au = u, al = 1.0)
+            for (k,ρ) = enumerate(ρ_vec)
+                # Random.seed!(ρ_ind)
+                p_sim.ρ[end] = ρ
+
+                prob = ODEProblem(dx!, x0, t, p_sim)
+                sol = solve(prob, Rosenbrock23(),
+                    callback = TerminateSteadyState(), save_everystep = false)
+
+                println(sol.retcode, "  ", maximum(abs.(sol(sol.t[end], Val{1}))))
                 
+                
+                
+                mass_mat[r,i,j,k] = deepcopy(sol[end])
+                p_mat[r,i,j,k] = deepcopy(p_sim)
+                J_mat[r,i,j,k] = MiCRM.Analysis.get_jac(sol)
+                dx_mat[r,i,j,k] = (sol.retcode, maximum(abs.(sol(sol.t[end],Val{1}))))
 
-                    println("u: ", i, " l: ", j)
-                    println("Thread: ", Threads.threadid()," rep: ",r ," λ: ", λ)
-
-                    p_sim = MiCRM.Parameters.generate_params(N, M, f_u = fu, f_l = fl, f_ρ = fρ, λ = λ, γ = γ, u_ratio = us, l_ratio = ls, u_tot = utot)
-
-                    for (ρ_ind,ρ) = enumerate(ρ_vec)
-
-                        # Random.seed!(ρ_ind)
-                        p_sim.ρ[end] = ρ
-
-                        prob = ODEProblem(dx!, x0, t, p_sim)
-                        sol = solve(prob, Rosenbrock23(),
-                            callback = TerminateSteadyState(), save_everystep = false)
-
-                        if sol.retcode == ReturnCode.Terminated
-                            mass_mat[r,i,j,k,l,ρ_ind] = deepcopy(sol[end])
-                            p_mat[r,i,j,k,l,ρ_ind] = deepcopy(p_sim)
-                            J_mat[r,i,j,k,l,ρ_ind] = MiCRM.Analysis.get_jac(sol, thresh = 1.0)
-                        else
-                            mass_mat[r,i,j,k,l,ρ_ind] = p_mat[r,i,j,k,l,ρ_ind] = J_mat[r,i,j,k,l,ρ_ind] = nothing
-                        end
-
-                    end
-                end
             end 
         end
     end
@@ -117,4 +115,4 @@ end
 
 println("saving")
 
-save("./data/detox_simulations.jld2", Dict("mass" => mass_mat, "p" => p_mat, "J" => J_mat))
+save("./data/detox_simulations.jld2", Dict("mass" => mass_mat, "p" => p_mat, "J" => J_mat, "dx" => dx_mat))

@@ -1,6 +1,6 @@
 using Pkg
 
-print(Threads.nthreads())
+println(Threads.nthreads())
 
 Pkg.activate(".")
 
@@ -34,6 +34,38 @@ function get_a_mat(J, p, mass)
     end
     return(a_mat)
 end
+
+#get separate U and L matricies
+dgdR(p, R, i, a) = p.u[i,a] * p.kw.γ[i,a] * (1 - p.kw.λ)
+
+function dLdC(p, R, j, a)
+    v = 0.0
+    for b = 1:p.M
+        v += p.l[b,a] * R[b] * p.u[j,b]
+    end
+    return v
+end
+
+dUdC(p, R, j, a) = R[a] * p.u[j,a]
+
+function a_L(p,R,i,j)
+    v = 0.0
+    for a = 1:p.M
+        v += dgdR(p,R,i,a) * dLdC(p,R,j,a)
+    end
+    return(v)
+end
+
+function a_U(p,R,i,j)
+    v = 0.0
+    for a = 1:p.M
+        v += dgdR(p,R,i,a) * dUdC(p,R,j,a)
+    end
+    return(v)
+end
+
+get_U_mat(p,R) = [a_U(p,R,i,j) for i = 1:p.N , j = 1:p.N]
+get_L_mat(p,R) = [a_L(p,R,i,j) for i = 1:p.N , j = 1:p.N]
 
 function get_Rinf(J, p, mass)
     #remove extinct consumers
@@ -82,16 +114,30 @@ end
 
 r = JLD2.load("./data/detox_simulations.jld2")
 
-a = similar(r["J"])
+a_U_mat = a_L_mat = similar(r["J"])
 Rinf = similar(r["J"])
 pert = similar(r["J"])
 
+println(length(r["J"]))
+
+prop = [0.0]
+
 Threads.@threads for i = 1:length(r["J"])
-    println(i / length(r["J"]))
-    a[i] = get_a_mat(r["J"][i], r["p"][i], r["mass"][i])
-    Rinf[i] = get_Rinf(r["J"][i], r["p"][i], r["mass"][i]);
-    pert[i] = max_perturbation(r["J"][i], r["p"][i], r["mass"][i]);
+    J = r["J"][i]
+    p = r["p"][i]
+    mass = r["mass"][i]
+    
+    prop[1] += 1 / length(r["J"])
+    Threads.threadid() == 1 && println(prop[1])
+    # a[i] = get_a_mat(r["J"][i], r["p"][i], r["mass"][i])
+    
+    if mass != nothing
+        a_U_mat[i] = get_U_mat(p, mass[p.N+1 : end]) 
+        a_L_mat[i] = get_L_mat(p, mass[p.N+1 : end])
+        Rinf[i] = get_Rinf(J, p, mass);
+        # @time pert[i] = max_perturbation(J, p, mass);
+    end
 end
 
 
-save("./data/analysis.jld2", Dict("a_mat" => a, "Rinf" => Rinf, "max_p" => pert))
+save("./data/analysis.jld2", Dict("a_U" => a_U_mat, "a_L" => a_L_mat, "Rinf" => Rinf, "max_p" => pert))
