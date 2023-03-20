@@ -31,7 +31,9 @@ dx!(dx,x,p,t) = MiCRM.Simulations.dx!(dx,x,p,t;  growth! = growth_MiCRM_detox!)
 #Dirchlet U matricies
 function dirchlet_uptake(N,M,kw)
     u = zeros(N,M)
-    u[:,1 : end-1] .= Array(rand(Dirichlet(M-1, kw[:au]), N)')
+    for i = 1:N
+        u[N, 1: end-1] .= rand(Dirichlet(M-1, kw[:au][i]),1)
+    end
     u[:,end] .= rand(Dirichlet(N, 1.0), 1)
     return(u)
 end
@@ -61,7 +63,7 @@ N,M = 25,25
 
 #generate test parameters
 p = MiCRM.Parameters.generate_params(N, M, f_u = dirchlet_uptake, f_l = dirchlet_leakage, f_ρ = fρ,
-    λ = 1e-6, γ = γ, au = 1.0, al = 1.0)
+    λ = 1e-6, γ = γ, au = ones(N), al = 1.0)
 
 #simualtion params
 x0 = rand(N+M)
@@ -71,27 +73,22 @@ prob = ODEProblem(dx!, x0, t, p)
 sol = solve(prob, AutoTsit5(Rosenbrock23()), callback = TerminateSteadyState())
 
 #vary stressor supply, and uptake & leakage structure
-N_r,N_u,N_λ,N_ρ = 100,20,3,5
-
-u_vec = 10 .^ range(-2, 0, length = N_u)
+N_r,N_λ,N_ρ = 1000,3,10
 λ_vec = [0.1, 0.3, 0.7]
-ρ_vec = [0, 0.1, 1.0, M, 150]
+ρ_vec = 10 .^ range(-4,4, length = N_ρ)
 
-
-
-sol_mat = Array{Any, 4}(undef, N_r,N_u,N_λ,N_ρ)
+sol_mat = Array{Any, 3}(undef, N_r,N_λ,N_ρ)
 mass_mat = similar(sol_mat)
 p_mat = similar(sol_mat)
 J_mat = similar(sol_mat)
 dx_mat = similar(sol_mat)
 
 Threads.@threads for r = 1:N_r
-    for (i,u) = enumerate(u_vec)
-        for (j,λ) = enumerate(λ_vec)
+        for (i,λ) = enumerate(λ_vec)
              # println("u: ", i, " l: ", j)
              # println("Thread: ", Threads.threadid()," rep: ",r ," λ: ", λ)
-             p_sim = MiCRM.Parameters.generate_params(N, M, f_u = dirchlet_uptake, f_l = dirchlet_leakage, f_ρ = fρ, λ = λ, γ = γ, au = u, al = 1.0)
-            for (k,ρ) = enumerate(ρ_vec)
+             p_sim = MiCRM.Parameters.generate_params(N, M, f_u = dirchlet_uptake, f_l = dirchlet_leakage, f_ρ = fρ, λ = λ, γ = γ, au = rand(N), al = 1.0)
+            for (j,ρ) = enumerate(ρ_vec)
                 # Random.seed!(ρ_ind)
                 p_sim.ρ[end] = ρ
 
@@ -100,11 +97,13 @@ Threads.@threads for r = 1:N_r
                     callback = TerminateSteadyState(), save_everystep = false)
 
                 println(sol.retcode, "  ", maximum(abs.(sol(sol.t[end], Val{1}))))
-                  
-                mass_mat[r,i,j,k] = deepcopy(sol[end])
-                p_mat[r,i,j,k] = deepcopy(p_sim)
-                J_mat[r,i,j,k] = MiCRM.Analysis.get_jac(sol)
-                dx_mat[r,i,j,k] = (sol.retcode, maximum(abs.(sol(sol.t[end],Val{1}))))
+                
+                
+                
+                mass_mat[r,i,j] = deepcopy(sol[end])
+                p_mat[r,i,j] = deepcopy(p_sim)
+                J_mat[r,i,j] = MiCRM.Analysis.get_jac(sol)
+                dx_mat[r,i,j] = (sol.retcode, maximum(abs.(sol(sol.t[end],Val{1}))))
 
             end 
         end
@@ -113,4 +112,4 @@ end
 
 println("saving")
 
-save("./data/detox_simulations.jld2", Dict("mass" => mass_mat, "p" => p_mat, "J" => J_mat, "dx" => dx_mat))
+save("./data/detox_simulations_rand.jld2", Dict("mass" => mass_mat, "p" => p_mat, "J" => J_mat, "dx" => dx_mat))

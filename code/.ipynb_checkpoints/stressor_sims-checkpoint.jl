@@ -71,11 +71,11 @@ prob = ODEProblem(dx!, x0, t, p)
 sol = solve(prob, AutoTsit5(Rosenbrock23()), callback = TerminateSteadyState())
 
 #vary stressor supply, and uptake & leakage structure
-N_r,N_u,N_λ,N_ρ = 25,20,3,10
+N_r,N_u,N_λ,N_ρ = 100,20,3,5
 
-u_vec = 10 .^ range(-2, 2, length = N_u)
+u_vec = 10 .^ range(-2, 0, length = N_u)
 λ_vec = [0.1, 0.3, 0.7]
-ρ_vec = 10 .^ range(-4,4, length = N_ρ)
+ρ_vec = [0, 0.1, 1.0, M, 150]
 
 
 
@@ -100,9 +100,7 @@ Threads.@threads for r = 1:N_r
                     callback = TerminateSteadyState(), save_everystep = false)
 
                 println(sol.retcode, "  ", maximum(abs.(sol(sol.t[end], Val{1}))))
-                
-                
-                
+                  
                 mass_mat[r,i,j,k] = deepcopy(sol[end])
                 p_mat[r,i,j,k] = deepcopy(p_sim)
                 J_mat[r,i,j,k] = MiCRM.Analysis.get_jac(sol)
